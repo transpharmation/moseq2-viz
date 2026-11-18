@@ -380,8 +380,15 @@ def compute_mouse_dist_to_center(roi, centroid_x_px, centroid_y_px):
 
     # Get (x,y) distances to bucket center throughout the session recording.
     # add back bounding box offset
-    dx = (centroid_x_px + xmin) - center_x
-    dy = (centroid_y_px + ymin) - center_y
+    # (float64: numpy >= 2 keeps float32 through python-scalar ops where
+    # numpy 1 promoted to float64; pin the release dtype)
+    # numpy 1 (value-based casting) folded the int/float scalars into the
+    # float32 centroid arithmetic without widening; NEP 50 promotes numpy
+    # int64 scalars to float64. Cast the scalars to the centroid dtype to
+    # reproduce the release values exactly.
+    cdtype = np.asarray(centroid_x_px).dtype
+    dx = (centroid_x_px + cdtype.type(xmin)) - cdtype.type(center_x)
+    dy = (centroid_y_px + cdtype.type(ymin)) - cdtype.type(center_y)
 
     # Compute distance to center
     return np.hypot(dx, dy)
@@ -421,10 +428,9 @@ def scalars_to_dataframe(index: dict, include_keys: list = ['SessionName', 'Subj
     dfs = []
     # Iterate through index file session info and paths
     for k, v in tqdm(index['files'].items(), disable=disable_output, desc='Creating MoSeq DataFrame'):
-        if has_model:
-            # skipping the session uuids (found in the index file) that are not included in the model uuids.
-            if k not in model_uuids:
-                continue
+        # skipping the session uuids (found in the index file) that are not included in the model uuids.
+        if has_model and k not in model_uuids: continue
+
         # Get path to extraction h5 file
         pth = h5_filepath_from_sorted(v)
         # Load scalars from h5
@@ -435,9 +441,8 @@ def scalars_to_dataframe(index: dict, include_keys: list = ['SessionName', 'Subj
             roi = h5_to_dict(pth, path='metadata/extraction/roi')['roi']
             dset['dist_to_center_px'] = compute_mouse_dist_to_center(roi, dset['centroid_x_px'], dset['centroid_y_px'])
         except KeyError:
-            print(f'ROI was not found in the given h5 file. \n'
+            print('ROI was not found in the given h5 file. \n'
                   f'Not including the dist_to_center_px column in outputted scalar_df for session-uuid {k}')
-            pass
 
         timestamps = get_timestamps_from_h5(pth)
 

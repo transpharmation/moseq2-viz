@@ -9,7 +9,8 @@ import numpy as np
 from glob import glob
 from typing import Union
 from pathlib import Path
-import ruamel.yaml as yaml
+from ruamel.yaml import YAML
+yaml = YAML(typ="safe", pure=True)
 from cytoolz import curry, compose
 from cytoolz.curried import valmap
 from cytoolz.dicttoolz import dissoc, assoc
@@ -82,9 +83,13 @@ def clean_dict(dct):
         elif isinstance(e, np.ndarray):
             out = e.tolist()
         elif isinstance(e, np.generic):
-            out = np.asscalar(e)
+            out = e.item()  # np.asscalar removed in numpy 2
         else:
             out = e
+        # h5py >= 3 returns bytes for fixed-length strings where h5py 2
+        # auto-decoded them; keep plain str for the yaml dump
+        if isinstance(out, bytes):
+            out = out.decode("utf-8")
         return out
 
     return valmap(clean_entry, dct)
@@ -189,8 +194,15 @@ def load_changepoint_distribution(cpfile: Union[str, Path]) -> np.ndarray:
     """
 
     cps = h5_to_dict(cpfile, "cps")
-    cp_dist = map(compose(np.diff, np.squeeze), cps.values())
-    return np.concatenate(list(cp_dist))
+    cp_dist = []
+    for key, val in cps.items():
+        val = np.squeeze(val)
+        if len(val) > 1:
+            cp_dist.append(np.diff(val))
+        else:
+            print(f"Warning: no changepoints found for {key}")
+
+    return np.concatenate(cp_dist)
 
 
 def load_timestamps(timestamp_file, col=0):
@@ -347,7 +359,7 @@ def read_yaml(yaml_path: str):
 
     """
     with open(yaml_path, "r") as f:
-        loaded = yaml.safe_load(f)
+        loaded = yaml.load(f)
     return loaded
 
 
